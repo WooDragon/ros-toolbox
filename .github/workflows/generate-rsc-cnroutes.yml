@@ -37,7 +37,7 @@ jobs:
           )
           ipv6_files=("cmcc6.txt" "chinanet6.txt" "china6.txt")
 
-          # 去重使用的关联数组（分别用于 IPv4 和 IPv6）
+          # 定义用于去重的关联数组
           declare -A seen_ipv4
           declare -A seen_ipv6
 
@@ -89,12 +89,11 @@ jobs:
 
           echo "RouterOS rsc file generated: ${output_file}"
 
-      - name: Create/Update Release with latest tag
+      - name: Release static_routes.rsc to GitHub Release (latest)
         uses: ncipollo/release-action@v1
         with:
-          tag: latest
+          commit: "main"
+          tag: "latest"
           name: "Latest RouterOS Static Routes"
-          files: static_routes.rsc
-          overwrite: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: static_routes.rsc
+          allowUpdates: true
