@@ -12,9 +12,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Install GitHub CLI
-        run: sudo apt-get install -y gh
-
       - name: Generate RouterOS rsc file
         run: |
           set -e
@@ -24,6 +21,7 @@ jobs:
           echo "# Generated on $(date)" >> $output_file
           echo "" >> $output_file
 
+          # IPv4 文件及对应的网关（顺序：cmcc.txt -> chinanet.txt -> china.txt）
           declare -A file_gateway_map=(
             ["cmcc.txt"]="pppoe-cmn1 pppoe-cmn2 pppoe-cmn5 pppoe-cmn6 pppoe-cmn7"
             ["chinanet.txt"]="pppoe-ctn1 pppoe-ctn5"
@@ -31,6 +29,7 @@ jobs:
           )
           ipv4_files=("cmcc.txt" "chinanet.txt" "china.txt")
 
+          # IPv6 文件及对应的网关（顺序：cmcc6.txt -> chinanet6.txt -> china6.txt）
           declare -A file_gateway_map6=(
             ["cmcc6.txt"]="pppoe-cmn1 pppoe-cmn2 pppoe-cmn5 pppoe-cmn6 pppoe-cmn7"
             ["chinanet6.txt"]="pppoe-ctn1 pppoe-ctn5"
@@ -38,6 +37,7 @@ jobs:
           )
           ipv6_files=("cmcc6.txt" "chinanet6.txt" "china6.txt")
 
+          # 去重使用的关联数组（分别用于 IPv4 和 IPv6）
           declare -A seen_ipv4
           declare -A seen_ipv6
 
@@ -77,39 +77,24 @@ jobs:
             done < "${file}"
           }
 
+          # 处理 IPv4 文件（按顺序）
           for file in "${ipv4_files[@]}"; do
             process_file "$file" "${file_gateway_map[$file]}" 0
           done
 
+          # 处理 IPv6 文件（按顺序）
           for file in "${ipv6_files[@]}"; do
             process_file "$file" "${file_gateway_map6[$file]}" 1
           done
 
           echo "RouterOS rsc file generated: ${output_file}"
 
-      - name: Delete existing 'latest' release and tag (if exists)
-        run: |
-          gh release delete latest --yes || true
-          git tag -d latest || true
-          git push origin --delete latest || true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create and push new 'latest' tag
-        run: |
-          git tag latest
-          git push origin latest
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create GitHub Release with 'latest' tag
-        uses: softprops/action-gh-release@v1
+      - name: Create/Update Release with latest tag
+        uses: ncipollo/release-action@v1
         with:
-          tag_name: latest
+          tag: latest
           name: "Latest RouterOS Static Routes"
           files: static_routes.rsc
-          body: "Automatically generated RouterOS static routes script."
-          draft: false
-          prerelease: false
+          overwrite: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
