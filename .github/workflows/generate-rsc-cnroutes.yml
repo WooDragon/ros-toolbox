@@ -52,7 +52,7 @@ jobs:
             curl -s "${base_url}/${file}" -o "${file}"
             if [ ! -s "${file}" ]; then
               echo "Error: File ${file} is empty or failed to download" >&2
-              return 1
+              exit 1
             fi
             # 遍历文件每一行，去除空白并跳过空行和注释行（以#开头）
             while IFS= read -r line; do
@@ -78,9 +78,10 @@ jobs:
           done
           
           echo "RouterOS rsc file generated: ${output_file}"
-      
+
       - name: Upload generated rsc as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: static_routes.rsc
           path: static_routes.rsc
+          retention-days: 5
