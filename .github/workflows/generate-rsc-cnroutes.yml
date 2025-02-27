@@ -79,9 +79,16 @@ jobs:
           
           echo "RouterOS rsc file generated: ${output_file}"
 
-      - name: Upload generated rsc as artifact
-        uses: actions/upload-artifact@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
         with:
-          name: static_routes.rsc
-          path: static_routes.rsc
-          retention-days: 5
+          files: static_routes.rsc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload generated rsc as release asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: static_routes.rsc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
