@@ -15,28 +15,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Generate RouterOS rsc file
+      - name: Generate RouterOS rsc files
         run: |
           set -e
           base_url="https://gaoyifan.github.io/china-operator-ip"
-          output_file="static_routes.rsc"
-          echo "# Generated RouterOS static routes" > $output_file
-          echo "# Generated on $(date)" >> $output_file
-          echo "" >> $output_file
+
+          # 准备输出文件名
+          file_10="static_routes_10.rsc"
+          file_11="static_routes_11.rsc"
+
+          # 写文件头部信息
+          echo "# Generated RouterOS static routes (distance=10 -> remove distance=11)" >  $file_10
+          echo "# Generated on $(date)" >> $file_10
+          echo "" >> $file_10
+
+          echo "# Generated RouterOS static routes (distance=11 -> remove distance=10)" >  $file_11
+          echo "# Generated on $(date)" >> $file_11
+          echo "" >> $file_11
 
           # IPv4 文件及对应的网关（顺序：cmcc.txt -> chinanet.txt -> china.txt）
           declare -A file_gateway_map=(
-            ["cmcc.txt"]="pppoe-cmn1 pppoe-cmn2 pppoe-cmn5 pppoe-cmn6 pppoe-cmn7"
-            ["chinanet.txt"]="pppoe-ctn1 pppoe-ctn5"
-            ["china.txt"]="pppoe-ctn1 pppoe-ctn5 pppoe-cmn1 pppoe-cmn2 pppoe-cmn5 pppoe-cmn6 pppoe-cmn7"
+            ["cmcc.txt"]="pppoe-cmn-e1 pppoe-cmn-e2"
+            ["chinanet.txt"]="pppoe-ctn1 pppoe-ctn2 pppoe-ctn5"
+            ["china.txt"]="pppoe-ctn1 pppoe-ctn5 pppoe-cmn-e1 pppoe-cmn-e2"
           )
           ipv4_files=("cmcc.txt" "chinanet.txt" "china.txt")
 
           # IPv6 文件及对应的网关（顺序：cmcc6.txt -> chinanet6.txt -> china6.txt）
           declare -A file_gateway_map6=(
-            ["cmcc6.txt"]="pppoe-cmn1 pppoe-cmn2 pppoe-cmn5 pppoe-cmn6 pppoe-cmn7"
-            ["chinanet6.txt"]="pppoe-ctn1 pppoe-ctn5"
-            ["china6.txt"]="pppoe-ctn1 pppoe-ctn5 pppoe-cmn1 pppoe-cmn2 pppoe-cmn5 pppoe-cmn6 pppoe-cmn7"
+            ["cmcc6.txt"]="pppoe-cmn-e1 pppoe-cmn-e2"
+            ["chinanet6.txt"]="pppoe-ctn1 pppoe-ctn2 pppoe-ctn5"
+            ["china6.txt"]="pppoe-ctn1 pppoe-ctn5 pppoe-cmn-e1 pppoe-cmn-e2"
           )
           ipv6_files=("cmcc6.txt" "chinanet6.txt" "china6.txt")
 
@@ -44,25 +53,31 @@ jobs:
           declare -A seen_ipv4
           declare -A seen_ipv6
 
-          process_file() {
-            local file=$1
-            local gateways="$2"
-            local is_ipv6=$3
+          # 生成函数：给定两个参数
+          #   $1 => 要使用的 distance
+          #   $2 => 输出文件名
+          #   用于把所有下载的 IP 地址写入对应 distance 的 "add" 命令
+          process_routes() {
+            local distance="$1"
+            local out_file="$2"
+            local file="$3"
+            local is_ipv6="$4"
+            local gateways="$5"
+
             local cmd_prefix="/ip route add"
             if [ "$is_ipv6" -eq 1 ]; then
               cmd_prefix="/ipv6 route add"
             fi
-            echo "Downloading ${file}..."
-            curl -s "${base_url}/${file}" -o "${file}"
-            if [ ! -s "${file}" ]; then
-              echo "Error: File ${file} is empty or failed to download" >&2
-              exit 1
-            fi
+
             while IFS= read -r line; do
-              trimmed=$(echo "$line" | xargs)
+              local trimmed
+              trimmed="$(echo "$line" | xargs)"
+              # 跳过空行和注释
               if [ -z "$trimmed" ] || [[ $trimmed == \#* ]]; then
                 continue
               fi
+
+              # 去重判断
               if [ "$is_ipv6" -eq 1 ]; then
                 if [ -n "${seen_ipv6[$trimmed]}" ]; then
                   continue
@@ -74,29 +89,68 @@ jobs:
                 fi
                 seen_ipv4["$trimmed"]=1
               fi
+
+              # 写入多个网关的 add 命令
               for gw in $gateways; do
-                echo "${cmd_prefix} disabled=no distance=11 dst-address=${trimmed} gateway=${gw} routing-table=main suppress-hw-offload=no" >> $output_file
+                echo "${cmd_prefix} disabled=no distance=${distance} dst-address=${trimmed} gateway=${gw} routing-table=main suppress-hw-offload=no" >> "$out_file"
               done
             done < "${file}"
           }
 
-          # 处理 IPv4 文件（按顺序）
-          for file in "${ipv4_files[@]}"; do
-            process_file "$file" "${file_gateway_map[$file]}" 0
-          done
+          download_and_generate() {
+            local distance="$1"
+            local out_file="$2"
+            shift 2  # 剩余为文件列表
 
-          # 处理 IPv6 文件（按顺序）
-          for file in "${ipv6_files[@]}"; do
-            process_file "$file" "${file_gateway_map6[$file]}" 1
-          done
+            for file in "$@"; do
+              echo "Downloading ${file}..."
+              curl -s "${base_url}/${file}" -o "${file}"
+              if [ ! -s "${file}" ]; then
+                echo "Error: File ${file} is empty or failed to download" >&2
+                exit 1
+              fi
+              if [[ "$file" == *6.txt ]]; then
+                # IPv6
+                process_routes "$distance" "$out_file" "$file" 1 "${file_gateway_map6[$file]}"
+              else
+                # IPv4
+                process_routes "$distance" "$out_file" "$file" 0 "${file_gateway_map[$file]}"
+              fi
+            done
+          }
 
-          echo "RouterOS rsc file generated: ${output_file}"
+          # 先清空去重记录
+          seen_ipv4=()
+          seen_ipv6=()
 
-      - name: Release static_routes.rsc to GitHub Release (latest)
+          # 生成 static_routes_10.rsc （里面先加distance=10的路由）
+          # 再清除 distance=11 的旧路由
+          download_and_generate 10 "$file_10" "${ipv4_files[@]}" "${ipv6_files[@]}"
+          # 添加完毕后，最后加上删除 distance=11 的命令
+          echo "" >> "$file_10"
+          echo "/ip route remove [find where distance=11]" >> "$file_10"
+          echo "/ipv6 route remove [find where distance=11]" >> "$file_10"
+
+          # 再次清空去重记录（因为另一份脚本需要重复添加，否则会被上面去重）
+          seen_ipv4=()
+          seen_ipv6=()
+
+          # 生成 static_routes_11.rsc （里面先加distance=11的路由）
+          # 再清除 distance=10 的旧路由
+          download_and_generate 11 "$file_11" "${ipv4_files[@]}" "${ipv6_files[@]}"
+          # 添加完毕后，最后加上删除 distance=10 的命令
+          echo "" >> "$file_11"
+          echo "/ip route remove [find where distance=10]" >> "$file_11"
+          echo "/ipv6 route remove [find where distance=10]" >> "$file_11"
+
+          echo "Two RSC files generated: $file_10 and $file_11"
+
+      - name: Release rsc files to GitHub Release (latest)
         uses: ncipollo/release-action@v1
         with:
           commit: "main"
           tag: "latest"
           name: "Latest RouterOS Static Routes"
-          artifacts: static_routes.rsc
+          # 用逗号分隔，可以将两份脚本都上传到 release
+          artifacts: "static_routes_10.rsc,static_routes_11.rsc"
           allowUpdates: true
