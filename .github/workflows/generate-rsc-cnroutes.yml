@@ -12,39 +12,35 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      - name: Install GitHub CLI
+        run: sudo apt-get install -y gh
+
       - name: Generate RouterOS rsc file
         run: |
           set -e
-          # 基础 URL，用于下载各个文本文件
           base_url="https://gaoyifan.github.io/china-operator-ip"
-          
-          # 输出文件名
           output_file="static_routes.rsc"
           echo "# Generated RouterOS static routes" > $output_file
           echo "# Generated on $(date)" >> $output_file
           echo "" >> $output_file
-          
-          # IPv4 文件与对应的网关列表（按照顺序：cmcc.txt → chinanet.txt → china.txt）
+
           declare -A file_gateway_map=(
             ["cmcc.txt"]="pppoe-cmn1 pppoe-cmn2 pppoe-cmn5 pppoe-cmn6 pppoe-cmn7"
             ["chinanet.txt"]="pppoe-ctn1 pppoe-ctn5"
             ["china.txt"]="pppoe-ctn1 pppoe-ctn5 pppoe-cmn1 pppoe-cmn2 pppoe-cmn5 pppoe-cmn6 pppoe-cmn7"
           )
           ipv4_files=("cmcc.txt" "chinanet.txt" "china.txt")
-          
-          # IPv6 文件与对应的网关列表（按照顺序：cmcc6.txt → chinanet6.txt → china6.txt）
+
           declare -A file_gateway_map6=(
             ["cmcc6.txt"]="pppoe-cmn1 pppoe-cmn2 pppoe-cmn5 pppoe-cmn6 pppoe-cmn7"
             ["chinanet6.txt"]="pppoe-ctn1 pppoe-ctn5"
             ["china6.txt"]="pppoe-ctn1 pppoe-ctn5 pppoe-cmn1 pppoe-cmn2 pppoe-cmn5 pppoe-cmn6 pppoe-cmn7"
           )
           ipv6_files=("cmcc6.txt" "chinanet6.txt" "china6.txt")
-          
-          # 定义去重关联数组：分别用于 IPv4 和 IPv6
+
           declare -A seen_ipv4
           declare -A seen_ipv6
-          
-          # 定义处理函数，参数：文件名、网关列表、是否为 IPv6（0=否，1=是）
+
           process_file() {
             local file=$1
             local gateways="$2"
@@ -59,14 +55,11 @@ jobs:
               echo "Error: File ${file} is empty or failed to download" >&2
               exit 1
             fi
-            # 按行处理文件内容
             while IFS= read -r line; do
               trimmed=$(echo "$line" | xargs)
-              # 跳过空行和注释行（以 # 开头）
               if [ -z "$trimmed" ] || [[ $trimmed == \#* ]]; then
                 continue
               fi
-              # 如果该路由已在之前的文件中处理过，则跳过
               if [ "$is_ipv6" -eq 1 ]; then
                 if [ -n "${seen_ipv6[$trimmed]}" ]; then
                   continue
@@ -78,35 +71,45 @@ jobs:
                 fi
                 seen_ipv4["$trimmed"]=1
               fi
-              # 对于每个有效的 CIDR，遍历对应的网关生成命令
               for gw in $gateways; do
                 echo "${cmd_prefix} disabled=no distance=11 dst-address=${trimmed} gateway=${gw} routing-table=main suppress-hw-offload=no" >> $output_file
               done
             done < "${file}"
           }
-          
-          # 处理 IPv4 文件（按 cmcc、chinanet、china 的顺序）
+
           for file in "${ipv4_files[@]}"; do
             process_file "$file" "${file_gateway_map[$file]}" 0
           done
-          
-          # 处理 IPv6 文件（按 cmcc6、chinanet6、china6 的顺序）
+
           for file in "${ipv6_files[@]}"; do
             process_file "$file" "${file_gateway_map6[$file]}" 1
           done
-          
+
           echo "RouterOS rsc file generated: ${output_file}"
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: static_routes.rsc
+      - name: Delete existing 'latest' release and tag (if exists)
+        run: |
+          gh release delete latest --yes || true
+          git tag -d latest || true
+          git push origin --delete latest || true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload generated rsc as release asset
+      - name: Create and push new 'latest' tag
+        run: |
+          git tag latest
+          git push origin latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release with 'latest' tag
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: latest
+          name: "Latest RouterOS Static Routes"
           files: static_routes.rsc
+          body: "Automatically generated RouterOS static routes script."
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
