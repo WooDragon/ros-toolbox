@@ -1,0 +1,86 @@
+name: Generate RouterOS Static Routes Script
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 每天 UTC 0 点运行
+  workflow_dispatch:      # 手动触发
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Generate RouterOS rsc file
+        run: |
+          set -e
+          # 定义基本 URL（所有文件都在同一域下）
+          base_url="https://gaoyifan.github.io/china-operator-ip"
+          
+          # 输出文件名
+          output_file="static_routes.rsc"
+          echo "# Generated RouterOS static routes" > $output_file
+          echo "# Generated on $(date)" >> $output_file
+          echo "" >> $output_file
+          
+          # 定义 IPv4 文件与对应的网关列表（空格分隔）
+          declare -A file_gateway_map=(
+            ["cmcc.txt"]="pppoe-cmn1 pppoe-cmn2 pppoe-cmn5 pppoe-cmn6 pppoe-cmn7"
+            ["chinanet.txt"]="pppoe-ctn1 pppoe-ctn5"
+            ["china.txt"]="pppoe-ctn1 pppoe-ctn5 pppoe-cmn1 pppoe-cmn2 pppoe-cmn5 pppoe-cmn6 pppoe-cmn7"
+          )
+          
+          # 定义 IPv6 文件与对应的网关列表（这里假定与 IPv4 相同，如有需要可自行调整）
+          declare -A file_gateway_map6=(
+            ["cmcc6.txt"]="pppoe-cmn1 pppoe-cmn2 pppoe-cmn5 pppoe-cmn6 pppoe-cmn7"
+            ["chinanet6.txt"]="pppoe-ctn1 pppoe-ctn5"
+            ["china6.txt"]="pppoe-ctn1 pppoe-ctn5 pppoe-cmn1 pppoe-cmn2 pppoe-cmn5 pppoe-cmn6 pppoe-cmn7"
+          )
+          
+          # 定义处理函数，参数：文件名、网关列表、是否为 IPv6（0=否，1=是）
+          process_file() {
+            local file=$1
+            local gateways="$2"
+            local is_ipv6=$3
+            # 根据是否 IPv6 选择命令前缀
+            local cmd_prefix="/ip route add"
+            if [ "$is_ipv6" -eq 1 ]; then
+              cmd_prefix="/ipv6 route add"
+            fi
+            echo "Downloading ${file}..."
+            curl -s "${base_url}/${file}" -o "${file}"
+            if [ ! -s "${file}" ]; then
+              echo "Error: File ${file} is empty or failed to download" >&2
+              return 1
+            fi
+            # 遍历文件每一行，去除空白并跳过空行和注释行（以#开头）
+            while IFS= read -r line; do
+              trimmed=$(echo "$line" | xargs)
+              if [ -z "$trimmed" ] || [[ $trimmed == \#* ]]; then
+                continue
+              fi
+              # 对于每个 CIDR，遍历所有网关，生成对应的路由命令
+              for gw in $gateways; do
+                echo "${cmd_prefix} disabled=no distance=11 dst-address=${trimmed} gateway=${gw} routing-table=main suppress-hw-offload=no" >> $output_file
+              done
+            done < "${file}"
+          }
+          
+          # 处理 IPv4 文件
+          for file in "${!file_gateway_map[@]}"; do
+            process_file "$file" "${file_gateway_map[$file]}" 0
+          done
+          
+          # 处理 IPv6 文件
+          for file in "${!file_gateway_map6[@]}"; do
+            process_file "$file" "${file_gateway_map6[$file]}" 1
+          done
+          
+          echo "RouterOS rsc file generated: ${output_file}"
+      
+      - name: Upload generated rsc as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: static_routes.rsc
+          path: static_routes.rsc
