@@ -62,5 +62,32 @@
     :log info "No additional dynamic uplink interfaces found or configured."
 }
 
+# --- 将192.168.66.0/24网段IP地址绑定到internal-mgmt接口 ---
+:log info "Checking for 192.168.66.0/24 network addresses to bind to internal-mgmt..."
+
+# 遍历所有IP地址配置
+:foreach ipAddress in=[/ip address find] do={
+    :local addressInfo [/ip address get $ipAddress address]
+    :local currentInterface [/ip address get $ipAddress interface]
+    
+    # 检查是否为192.168.66.0/24网段
+    :if ([:pick $addressInfo 0 [:find $addressInfo "/"]] ~ "192\\.168\\.66\\.[0-9]+") do={
+        :log info "Found 192.168.66.0/24 address $addressInfo on interface $currentInterface"
+        
+        # 检查是否已经绑定到internal-mgmt接口
+        :if ($currentInterface != "internal-mgmt") do={
+            :do {
+                # 将IP地址重新绑定到internal-mgmt接口
+                /ip address set $ipAddress interface=internal-mgmt
+                :log info "Moved 192.168.66.0/24 address $addressInfo from $currentInterface to internal-mgmt"
+            } on-error={
+                :log warning "Failed to move address $addressInfo to internal-mgmt interface"
+            }
+        } else={
+            :log info "Address $addressInfo is already on internal-mgmt interface"
+        }
+    }
+}
+
 :log info "Adaptive interface configuration script finished."
 # End of script source
