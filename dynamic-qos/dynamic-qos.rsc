@@ -47,7 +47,7 @@
 :local p2PeakRatio 66 ; # P2 queue is 66% of parent's max-limit
 
 # Midnight Hours
-:local midnightTotalRatio 33 ; # P1+P2 total limit is 33% of parent's
+:local midnightTotalRatio 25 ; # P1+P2 total limit is 25% of parent's
 :local midnightP1MinRatio 10
 :local midnightP1MaxRatio 20
 :local midnightP2MinRatio 10

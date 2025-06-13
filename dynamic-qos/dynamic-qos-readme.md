@@ -56,7 +56,7 @@
 ### 速率比例设置
 ```routeros
 :local p2PeakRatio 66              # P2晚高峰速率比例(%)
-:local midnightTotalRatio 33       # 凌晨时段总限速比例(%)
+:local midnightTotalRatio 25       # 凌晨时段总限速比例(%)
 :local workTotalRatio 50           # 工作时段总限速比例(%)
 ```
 
