@@ -17,13 +17,13 @@
 
 # Basic logging function (always outputs essential information)
 :local logBasic do={
-    :log info ("[" . $scriptName . "] " . $1)
+    :log info ("[DynamicQoS] " . $1)
 }
 
 # Detailed logging function (only when enableLogging is true)
 :local logDetail do={
     :if ($enableLogging) do={
-        :log info ("[" . $scriptName . "] " . $1)
+        :log info ("[DynamicQoS] " . $1)
     }
 }
 
@@ -161,12 +161,7 @@ $logDetail ("Debug: Time strings - Current: " . $currentTime . ", Peak: " . $tim
     }
 }
 
-$logBasic ("Starting run. Current time: " . $currentTime . ". Period: " . $currentPeriod)
-
-# Debug: Check for PCDN queues regardless of time period
-:local p1QueueCount [:len [/queue tree find packet-mark~"$pcdnP1Mark"]]
-:local p2QueueCount [:len [/queue tree find packet-mark~"$pcdnP2Mark"]]
-$logBasic ("Found " . $p1QueueCount . " P1 queues and " . $p2QueueCount . " P2 queues")
+$logBasic ("Run started: " . $currentTime . " | Period: " . $currentPeriod . " | Found " . [:len [/queue tree find packet-mark~"$pcdnP1Mark"]] . " P1/" . [:len [/queue tree find packet-mark~"$pcdnP2Mark"]] . " P2 queues")
 
 :if ($currentPeriod != "unknown") do={
     # Find all PCDN P1 queues
@@ -193,7 +188,7 @@ $logBasic ("Found " . $p1QueueCount . " P1 queues and " . $p2QueueCount . " P2 q
                 :if ($currentPeriod = "peak") do={
                     :set p1NewLimitBps $parentMaxLimitBps
                     :set p2NewLimitBps (($parentMaxLimitBps * $p2PeakRatio) / 100)
-                    $logBasic ("Peak Period for " . $parentName . ": P1=" . ($fromBps $p1NewLimitBps) . ", P2=" . ($fromBps $p2NewLimitBps))
+                    $logBasic ($parentName . " [Peak]: P1=" . ($fromBps $p1NewLimitBps) . " P2=" . ($fromBps $p2NewLimitBps))
                 }
 
                 :if ($currentPeriod = "midnight" || $currentPeriod = "work") do={
@@ -248,7 +243,7 @@ $logBasic ("Found " . $p1QueueCount . " P1 queues and " . $p2QueueCount . " P2 q
                         :set p1NewLimitBps ($totalAvailableBps - $p2NewLimitBps)
                     }
                     
-                    $logBasic ("Suppression for " . $parentName . ": Total=" . ($fromBps $totalAvailableBps) . ", P1=" . ($fromBps $p1NewLimitBps) . ", P2=" . ($fromBps $p2NewLimitBps))
+                    $logBasic ($parentName . " [Suppress]: Total=" . ($fromBps $totalAvailableBps) . " P1=" . ($fromBps $p1NewLimitBps) . " P2=" . ($fromBps $p2NewLimitBps))
                 }
 
                 # --- Smoothing Logic with Total Bandwidth Constraint ---
@@ -349,7 +344,7 @@ $logBasic ("Found " . $p1QueueCount . " P1 queues and " . $p2QueueCount . " P2 q
                     $logBasic ("Error applying P2 settings to " . $parentName . " - P2 ID: " . $p2qId)
                 }
                 
-                $logBasic ("Applied to " . $parentName . ": P1 max-limit=" . $p1NewLimitStr . ", P2 max-limit=" . $p2NewLimitStr)
+                # Remove this basic log as it's redundant with the above calculation log
 
             } else={
                 $logBasic ("Warning: P1 queue '" . $qName . "' found, but corresponding P2 queue not found for parent '" . $parentName . "'.")
@@ -362,7 +357,7 @@ $logBasic ("Found " . $p1QueueCount . " P1 queues and " . $p2QueueCount . " P2 q
     $logBasic ("No active period. No changes made.")
 }
 
-$logBasic ("Run finished.")
+# Remove this basic log to keep it minimal
 
 # --- SCHEDULER SETUP ---
 #
