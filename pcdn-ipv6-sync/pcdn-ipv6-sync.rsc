@@ -1,7 +1,7 @@
 # RouterOS IPv4/IPv6 防火墙地址列表同步脚本
 # 功能：同步 PCDN-P1 和 PCDN-P2 列表中的 IPv4 地址到对应的 IPv6 列表
 # 同步逻辑：IPv4 -> ARP (MAC) -> IPv6 Neighbor (GUA) -> IPv6 防火墙列表
-# 版本：1.1
+# 版本：1.2 - 修复清理逻辑，利用comment字段判断记录有效性
 # 适用：RouterOS v7
 
 # 脚本初始化与配置
@@ -11,35 +11,6 @@
 # 记录脚本启动
 :log info "$logPrefix Script started"
 
-# 预存当前 IPv6 列表状态 (为清理做准备)
-:local initialIPv6MembersP1 ""
-:local initialIPv6MembersP2 ""
-
-# 预存 PCDN-P1 的 IPv6 地址
-:foreach ipv6Entry in=[/ipv6 firewall address-list find list="PCDN-P1"] do={
-    :local ipv6Addr [/ipv6 firewall address-list get $ipv6Entry address]
-    :if ($initialIPv6MembersP1 = "") do={
-        :set initialIPv6MembersP1 $ipv6Addr
-    } else={
-        :set initialIPv6MembersP1 "$initialIPv6MembersP1,$ipv6Addr"
-    }
-}
-
-# 预存 PCDN-P2 的 IPv6 地址
-:foreach ipv6Entry in=[/ipv6 firewall address-list find list="PCDN-P2"] do={
-    :local ipv6Addr [/ipv6 firewall address-list get $ipv6Entry address]
-    :if ($initialIPv6MembersP2 = "") do={
-        :set initialIPv6MembersP2 $ipv6Addr
-    } else={
-        :set initialIPv6MembersP2 "$initialIPv6MembersP2,$ipv6Addr"
-    }
-}
-
-:log info "$logPrefix Pre-stored IPv6 addresses from PCDN-P1: $initialIPv6MembersP1"
-:log info "$logPrefix Pre-stored IPv6 addresses from PCDN-P2: $initialIPv6MembersP2"
-
-# 全局活动 IPv6 集合
-:local activeGlobalIPv6sThisRun ""
 
 # 核心同步逻辑 (对每个目标列表进行迭代)
 :foreach currentListName in=$targetListNames do={
@@ -80,21 +51,6 @@
                     :set foundGUA true
                     :log debug "$logPrefix Found GUA IPv6 $neighborIPv6Address for MAC $macAddress"
                     
-                    # 添加到全局活动集合 (确保唯一性)
-                    :local existsInActiveSet false
-                    :if ($activeGlobalIPv6sThisRun != "") do={
-                        :if ([:find $activeGlobalIPv6sThisRun $neighborIPv6Address] >= 0) do={
-                            :set existsInActiveSet true
-                        }
-                    }
-                    :if (!$existsInActiveSet) do={
-                        :if ($activeGlobalIPv6sThisRun = "") do={
-                            :set activeGlobalIPv6sThisRun $neighborIPv6Address
-                        } else={
-                            :set activeGlobalIPv6sThisRun "$activeGlobalIPv6sThisRun,$neighborIPv6Address"
-                        }
-                    }
-                    
                     # 添加到 IPv6 防火墙列表 (如果不存在)
                     # 检查多种可能的地址格式
                     :local existingIPv6Entry1 [/ipv6 firewall address-list find list=$currentListName address=$neighborIPv6Address]
@@ -103,13 +59,19 @@
                     
                     :if (!$addressExists) do={
                         :do {
-                            /ipv6 firewall address-list add list=$currentListName address=$neighborIPv6Address comment="Synced from $ipv4Address ($macAddress)"
+                            /ipv6 firewall address-list add list=$currentListName address=$neighborIPv6Address comment="AUTO-SYNC:$ipv4Address:$macAddress"
                             :log info "$logPrefix Added $neighborIPv6Address to $currentListName (from $ipv4Address, MAC $macAddress)"
                         } on-error={
                             :log warning "$logPrefix Failed to add $neighborIPv6Address to $currentListName - entry may already exist with different format"
                         }
                     } else={
-                        :log debug "$logPrefix IPv6 address $neighborIPv6Address already exists in $currentListName"
+                        # 更新现有条目的comment以确保信息是最新的
+                        :if ([:len $existingIPv6Entry1] > 0) do={
+                            /ipv6 firewall address-list set [:pick $existingIPv6Entry1 0] comment="AUTO-SYNC:$ipv4Address:$macAddress"
+                        } else={
+                            /ipv6 firewall address-list set [:pick $existingIPv6Entry2 0] comment="AUTO-SYNC:$ipv4Address:$macAddress"
+                        }
+                        :log debug "$logPrefix Updated comment for existing IPv6 address $neighborIPv6Address in $currentListName"
                     }
                 }
             }
@@ -121,62 +83,84 @@
     }
 }
 
-# 清理 IPv6 地址列表
+# 清理 IPv6 地址列表 - 基于comment字段的智能清理
 :log info "$logPrefix Starting cleanup phase"
 
-# 清理 PCDN-P1
-:if ($initialIPv6MembersP1 != "") do={
-    :local removedCount 0
-    :foreach oldIPv6Address in=[:toarray $initialIPv6MembersP1] do={
-        # 检查保留状态
-        :local shouldBeKept false
-        :if ($activeGlobalIPv6sThisRun != "") do={
-            :if ([:find $activeGlobalIPv6sThisRun $oldIPv6Address] >= 0) do={
-                :set shouldBeKept true
-            }
-        }
-        
-        # 执行移除
-        :if (!$shouldBeKept) do={
-            :local entryToRemove [/ipv6 firewall address-list find list="PCDN-P1" address=$oldIPv6Address]
-            :if ([:len $entryToRemove] > 0) do={
-                /ipv6 firewall address-list remove $entryToRemove
-                :set removedCount ($removedCount + 1)
-                :log info "$logPrefix Removed stale address $oldIPv6Address from PCDN-P1"
-            }
+# 构建当前IPv4地址集合，用于验证comment中的IPv4地址是否仍然有效
+:local currentIPv4Set ""
+:foreach currentListName in=$targetListNames do={
+    :foreach ipv4Entry in=[/ip firewall address-list find list=$currentListName] do={
+        :local ipv4Address [/ip firewall address-list get $ipv4Entry address]
+        :if ($currentIPv4Set = "") do={
+            :set currentIPv4Set "$currentListName:$ipv4Address"
+        } else={
+            :set currentIPv4Set "$currentIPv4Set,$currentListName:$ipv4Address"
         }
     }
-    :log info "$logPrefix Cleanup completed for PCDN-P1: removed $removedCount stale addresses"
 }
 
-# 清理 PCDN-P2
-:if ($initialIPv6MembersP2 != "") do={
+# 清理所有目标列表的IPv6条目
+:foreach currentListName in=$targetListNames do={
     :local removedCount 0
-    :foreach oldIPv6Address in=[:toarray $initialIPv6MembersP2] do={
-        # 检查保留状态
-        :local shouldBeKept false
-        :if ($activeGlobalIPv6sThisRun != "") do={
-            :if ([:find $activeGlobalIPv6sThisRun $oldIPv6Address] >= 0) do={
-                :set shouldBeKept true
+    :local keptCount 0
+    
+    # 遍历当前列表中的所有IPv6条目
+    :foreach ipv6Entry in=[/ipv6 firewall address-list find list=$currentListName] do={
+        :local ipv6Address [/ipv6 firewall address-list get $ipv6Entry address]
+        :local comment [/ipv6 firewall address-list get $ipv6Entry comment]
+        :local shouldKeep false
+        
+        # 检查comment格式是否为自动同步格式
+        :if ([:find $comment "AUTO-SYNC:"] = 0) do={
+            # 解析comment中的IPv4地址 (格式: AUTO-SYNC:IPv4:MAC)
+            :local commentParts [:toarray $comment]
+            :if ([:len $commentParts] >= 1) do={
+                :local commentContent [:pick $comment 10 [:len $comment]]
+                :local colonPos [:find $commentContent ":"]
+                :if ($colonPos >= 0) do={
+                    :local ipv4FromComment [:pick $commentContent 0 $colonPos]
+                    
+                    # 检查这个IPv4地址是否仍在当前列表中
+                    :local searchPattern "$currentListName:$ipv4FromComment"
+                    :if ([:find $currentIPv4Set $searchPattern] >= 0) do={
+                        :set shouldKeep true
+                        :log debug "$logPrefix Keeping IPv6 $ipv6Address (IPv4 $ipv4FromComment still in $currentListName)"
+                    } else={
+                        :log debug "$logPrefix IPv6 $ipv6Address should be removed (IPv4 $ipv4FromComment no longer in $currentListName)"
+                    }
+                } else={
+                    # comment格式异常，保守处理 - 保留
+                    :set shouldKeep true
+                    :log warning "$logPrefix Keeping IPv6 $ipv6Address due to malformed comment: $comment"
+                }
+            } else={
+                # comment格式异常，保守处理 - 保留
+                :set shouldKeep true
+                :log warning "$logPrefix Keeping IPv6 $ipv6Address due to malformed comment: $comment"
             }
+        } else={
+            # 非自动同步的条目（手动添加或其他脚本添加），保留
+            :set shouldKeep true
+            :log debug "$logPrefix Keeping IPv6 $ipv6Address (not auto-synced, comment: $comment)"
         }
         
-        # 执行移除
-        :if (!$shouldBeKept) do={
-            :local entryToRemove [/ipv6 firewall address-list find list="PCDN-P2" address=$oldIPv6Address]
-            :if ([:len $entryToRemove] > 0) do={
-                /ipv6 firewall address-list remove $entryToRemove
-                :set removedCount ($removedCount + 1)
-                :log info "$logPrefix Removed stale address $oldIPv6Address from PCDN-P2"
-            }
+        # 执行删除或保留
+        :if ($shouldKeep) do={
+            :set keptCount ($keptCount + 1)
+        } else={
+            /ipv6 firewall address-list remove $ipv6Entry
+            :set removedCount ($removedCount + 1)
+            :log info "$logPrefix Removed stale address $ipv6Address from $currentListName"
         }
     }
-    :log info "$logPrefix Cleanup completed for PCDN-P2: removed $removedCount stale addresses"
+    
+    :log info "$logPrefix Cleanup completed for $currentListName: removed $removedCount stale addresses, kept $keptCount valid addresses"
 }
 
-# 脚本结束
-:local totalActiveCount 0
-:if ($activeGlobalIPv6sThisRun != "") do={
-    :set totalActiveCount [:len [:toarray $activeGlobalIPv6sThisRun]]
+# 脚本结束 - 统计当前IPv6地址总数
+:local totalIPv6Count 0
+:foreach currentListName in=$targetListNames do={
+    :local listCount [:len [/ipv6 firewall address-list find list=$currentListName]]
+    :set totalIPv6Count ($totalIPv6Count + $listCount)
 }
-:log info "$logPrefix Script finished. Total active GUA IPv6 addresses: $totalActiveCount"
+:log info "$logPrefix Script finished. Total IPv6 addresses in target lists: $totalIPv6Count"
