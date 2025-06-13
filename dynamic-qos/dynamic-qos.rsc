@@ -11,7 +11,7 @@
 # --- General Settings ---
 # Log script actions for debugging.
 # true = detailed logs, false = basic logs only (essential information)
-:local enableLogging false
+:local enableLogging true
 # Name for log entries
 :local scriptName "DynamicQoS"
 
@@ -22,9 +22,7 @@
 
 # Detailed logging function (only when enableLogging is true)
 :local logDetail do={
-    :if ($enableLogging) do={
-        :log info ("[DynamicQoS] " . $1)
-    }
+    :log info ("[DynamicQoS] DEBUG: " . $1)
 }
 
 # --- Time Periods ---
@@ -97,15 +95,47 @@
     :return [:tostr $rate]
 }
 
-# Function for getting a random number in a range using system tick
+# Working random function using system clock
 :local random do={
     :local min $1
     :local max $2
-    :if ($min >= $max) do={ :return $min }
-    :local range ($max - $min + 1)
-    # This is a pseudo-random generator based on system uptime. Not cryptographically secure.
-    :local uptimeInSeconds ([:tonum [/system resource get uptime]])
-    :local randomVal ($uptimeInSeconds % $range)
+    :if ($min >= $max) do={ :return $max }
+    
+    # Get current time and extract seconds
+    :local currentTime [/system clock get time]
+    :local timeStr [:tostr $currentTime]
+    
+    # Extract last two characters (seconds)
+    :local timeLen [:len $timeStr]
+    :local lastChar [:pick $timeStr ($timeLen - 1) $timeLen]
+    :local secondLastChar [:pick $timeStr ($timeLen - 2) ($timeLen - 1)]
+    
+    # Convert to numbers
+    :local lastNum 0
+    :local secondLastNum 0
+    
+    :if ($lastChar = "0") do={ :set lastNum 0 }
+    :if ($lastChar = "1") do={ :set lastNum 1 }
+    :if ($lastChar = "2") do={ :set lastNum 2 }
+    :if ($lastChar = "3") do={ :set lastNum 3 }
+    :if ($lastChar = "4") do={ :set lastNum 4 }
+    :if ($lastChar = "5") do={ :set lastNum 5 }
+    :if ($lastChar = "6") do={ :set lastNum 6 }
+    :if ($lastChar = "7") do={ :set lastNum 7 }
+    :if ($lastChar = "8") do={ :set lastNum 8 }
+    :if ($lastChar = "9") do={ :set lastNum 9 }
+    
+    :if ($secondLastChar = "0") do={ :set secondLastNum 0 }
+    :if ($secondLastChar = "1") do={ :set secondLastNum 1 }
+    :if ($secondLastChar = "2") do={ :set secondLastNum 2 }
+    :if ($secondLastChar = "3") do={ :set secondLastNum 3 }
+    :if ($secondLastChar = "4") do={ :set secondLastNum 4 }
+    :if ($secondLastChar = "5") do={ :set secondLastNum 5 }
+    
+    # Create seed from seconds
+    :local seed ($secondLastNum * 10 + $lastNum)
+    :local range ($max - $min)
+    :local randomVal ($seed % $range)
     :return ($min + $randomVal)
 }
 
@@ -162,6 +192,20 @@ $logDetail ("Debug: Time strings - Current: " . $currentTime . ", Peak: " . $tim
 }
 
 $logBasic ("Run started: " . $currentTime . " | Period: " . $currentPeriod . " | Found " . [:len [/queue tree find packet-mark~"$pcdnP1Mark"]] . " P1/" . [:len [/queue tree find packet-mark~"$pcdnP2Mark"]] . " P2 queues")
+
+# Test inline random logic
+:local currentTime [/system clock get time]
+:local timeStr [:tostr $currentTime]
+:local timeLen [:len $timeStr]
+:local lastChar [:pick $timeStr ($timeLen - 1) $timeLen]
+:local testRandom1 (10 + ([:tonum $lastChar] % 10))
+:delay 1s
+:local currentTime2 [/system clock get time]
+:local timeStr2 [:tostr $currentTime2]
+:local timeLen2 [:len $timeStr2]
+:local lastChar2 [:pick $timeStr2 ($timeLen2 - 1) $timeLen2]
+:local testRandom2 (10 + ([:tonum $lastChar2] % 10))
+$logDetail ("Random test: " . $testRandom1 . ", " . $testRandom2)
 
 :if ($currentPeriod != "unknown") do={
     # Find all PCDN P1 queues
@@ -220,18 +264,68 @@ $logBasic ("Run started: " . $currentTime . " | Period: " . $currentPeriod . " |
                     :local p1MinBps (($parentMaxLimitBps * $p1Min) / 100)
                     :local p1MaxBps (($parentMaxLimitBps * $p1Max) / 100)
                     
+                    $logDetail ("Debug: Initial P1 range: " . ($fromBps $p1MinBps) . " to " . ($fromBps $p1MaxBps))
+                    $logDetail ("Debug: P1 max available after P2 min: " . ($fromBps $p1MaxAvailableBps))
+                    
                     # Ensure P1 max doesn't exceed what's available after P2 minimum
                     :if ($p1MaxBps > $p1MaxAvailableBps) do={
                         :set p1MaxBps $p1MaxAvailableBps
+                        $logDetail ("Debug: P1 max limited to: " . ($fromBps $p1MaxBps))
                     }
                     
                     # Ensure P1 min doesn't exceed P1 max
                     :if ($p1MinBps > $p1MaxBps) do={
                         :set p1MinBps $p1MaxBps
+                        $logDetail ("Debug: P1 min adjusted to: " . ($fromBps $p1MinBps))
                     }
                     
-                    # Step 5: Randomly assign P1 bandwidth within its valid range
-                    :local p1RandBps ($random $p1MinBps $p1MaxBps)
+                    $logDetail ("Debug: Final P1 range: " . ($fromBps $p1MinBps) . " to " . ($fromBps $p1MaxBps))
+                    
+                    # Step 5: Randomly assign P1 bandwidth within its valid range using inline logic
+                    $logDetail ("Debug: P1 random range: " . ($fromBps $p1MinBps) . " to " . ($fromBps $p1MaxBps))
+                    
+                    # Convert to M units for clean calculation
+                    :local p1MinM ($p1MinBps / 1000000)
+                    :local p1MaxM ($p1MaxBps / 1000000)
+                    
+                    # Inline random calculation for M units
+                    :local currentTime [/system clock get time]
+                    :local timeStr [:tostr $currentTime]
+                    :local timeLen [:len $timeStr]
+                    :local lastChar [:pick $timeStr ($timeLen - 1) $timeLen]
+                    :local secondLastChar [:pick $timeStr ($timeLen - 2) ($timeLen - 1)]
+                    
+                    # Convert to numbers and create seed
+                    :local lastNum 0
+                    :local secondLastNum 0
+                    :if ($lastChar = "0") do={ :set lastNum 0 }
+                    :if ($lastChar = "1") do={ :set lastNum 1 }
+                    :if ($lastChar = "2") do={ :set lastNum 2 }
+                    :if ($lastChar = "3") do={ :set lastNum 3 }
+                    :if ($lastChar = "4") do={ :set lastNum 4 }
+                    :if ($lastChar = "5") do={ :set lastNum 5 }
+                    :if ($lastChar = "6") do={ :set lastNum 6 }
+                    :if ($lastChar = "7") do={ :set lastNum 7 }
+                    :if ($lastChar = "8") do={ :set lastNum 8 }
+                    :if ($lastChar = "9") do={ :set lastNum 9 }
+                    
+                    :if ($secondLastChar = "0") do={ :set secondLastNum 0 }
+                    :if ($secondLastChar = "1") do={ :set secondLastNum 1 }
+                    :if ($secondLastChar = "2") do={ :set secondLastNum 2 }
+                    :if ($secondLastChar = "3") do={ :set secondLastNum 3 }
+                    :if ($secondLastChar = "4") do={ :set secondLastNum 4 }
+                    :if ($secondLastChar = "5") do={ :set secondLastNum 5 }
+                    
+                    # Create seed and calculate random M value
+                    :local seed ($secondLastNum * 10 + $lastNum)
+                    :local rangeM ($p1MaxM - $p1MinM)
+                    :local randomValM ($seed % $rangeM)
+                    :local p1RandM ($p1MinM + $randomValM)
+                    
+                    # Convert back to bps with clean M units
+                    :local p1RandBps ($p1RandM * 1000000)
+                    
+                    $logDetail ("Debug: P1 random result: " . $p1RandM . "M (" . $p1RandBps . " bps)")
                     :set p1NewLimitBps $p1RandBps
                     
                     # Step 6: Assign remaining bandwidth to P2
