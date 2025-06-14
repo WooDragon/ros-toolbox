@@ -22,7 +22,11 @@
 
 # Detailed logging function (only when enableLogging is true)
 :local logDetail do={
-    :log info ("[DynamicQoS] DEBUG: " . $1)
+    :local message $1
+    :local enabled $2
+    :if ($enabled = true) do={
+        :log info ("[DynamicQoS] DEBUG: " . $message)
+    }
 }
 
 # --- Time Periods ---
@@ -176,8 +180,8 @@ $logBasic ("Script started at " . $currentTime)
 :local currentPeriod "unknown"
 
 # Debug: Log time conversion results
-$logDetail ("Debug: Current seconds: " . $currentSeconds . ", Peak: " . $peakStartSeconds . "-" . $peakEndSeconds . ", Midnight: " . $midnightStartSeconds . "-" . $midnightEndSeconds . ", Work: " . $workStartSeconds . "-" . $workEndSeconds)
-$logDetail ("Debug: Time strings - Current: " . $currentTime . ", Peak: " . $timePeakStart . "-" . $timePeakEnd . ", Midnight: " . $timeMidnightStart . "-" . $timeMidnightEnd . ", Work: " . $timeWorkStart . "-" . $timeWorkEnd)
+$logDetail ("Debug: Current seconds: " . $currentSeconds . ", Peak: " . $peakStartSeconds . "-" . $peakEndSeconds . ", Midnight: " . $midnightStartSeconds . "-" . $midnightEndSeconds . ", Work: " . $workStartSeconds . "-" . $workEndSeconds) $enableLogging
+$logDetail ("Debug: Time strings - Current: " . $currentTime . ", Peak: " . $timePeakStart . "-" . $timePeakEnd . ", Midnight: " . $timeMidnightStart . "-" . $timeMidnightEnd . ", Work: " . $timeWorkStart . "-" . $timeWorkEnd) $enableLogging
 
 :if ($currentSeconds >= $peakStartSeconds and $currentSeconds <= $peakEndSeconds) do={
     :set currentPeriod "peak"
@@ -455,11 +459,11 @@ $logDetail ("Random test: " . $testRandom1 . ", " . $testRandom2)
                 $logDetail ("Debug: About to apply P1 settings - limit-at=" . $p1LimitAtStr . ", max-limit=" . $p1NewLimitStr . ", burst-limit=" . $p1BurstLimitStr . ", burst-threshold=" . $p1BurstThresholdStr . ", burst-time=" . $burstTime)
                 :do {
                      # Step 1: Clear burst parameters first to remove constraints
-                     $logDetail ("Debug: Clearing burst parameters first")
+                     $logDetail ("Debug: Clearing burst parameters first") $enableLogging
                      /queue tree set $p1qId burst-limit=0 burst-threshold=0 burst-time=0s
                      
                      # Step 2: Set limit-at to 0 to allow max-limit changes
-                     $logDetail ("Debug: Setting limit-at to 0")
+                     $logDetail ("Debug: Setting limit-at to 0") $enableLogging
                      /queue tree set $p1qId limit-at=0
                      
                      # Step 3: Set the new max-limit
@@ -471,10 +475,10 @@ $logDetail ("Random test: " . $testRandom1 . ", " . $testRandom2)
                      /queue tree set $p1qId limit-at=$p1LimitAtStr
                      
                      # Step 5: Configure burst parameters separately
-                     $logDetail ("Debug: Configuring burst parameters")
+                     $logDetail ("Debug: Configuring burst parameters") $enableLogging
                      /queue tree set $p1qId burst-limit=$p1BurstLimitStr burst-threshold=$p1BurstThresholdStr burst-time=$burstTime
                      
-                     $logDetail ("P1 queue updated successfully")
+                     $logDetail ("P1 queue updated successfully") $enableLogging
                  } on-error={
                      $logBasic ("Error applying P1 settings to " . $parentName . " - P1 ID: " . $p1qId . ". Trying without burst parameters...")
                      :do {
@@ -492,7 +496,7 @@ $logDetail ("Random test: " . $testRandom1 . ", " . $testRandom2)
                 $logDetail ("Debug: About to apply P2 settings - max-limit=" . $p2NewLimitStr . ", burst-limit=" . $p2BurstLimitStr . ", burst-threshold=" . $p2BurstThresholdStr . ", burst-time=" . $burstTime)
                 :do {
                     /queue tree set $p2qId max-limit=$p2NewLimitStr burst-limit=$p2BurstLimitStr burst-threshold=$p2BurstThresholdStr burst-time=$burstTime
-                    $logDetail ("P2 queue updated successfully")
+                    $logDetail ("P2 queue updated successfully") $enableLogging
                 } on-error={
                     $logBasic ("Error applying P2 settings to " . $parentName . " - P2 ID: " . $p2qId)
                 }
