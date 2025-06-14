@@ -347,34 +347,54 @@ $logDetail ("Random test: " . $testRandom1 . ", " . $testRandom2)
                 :local p1TargetBps $p1NewLimitBps
                 :local p2TargetBps $p2NewLimitBps
                 
+                $logDetail ("Debug: Smoothing - P1 current=" . ($fromBps $p1CurrentLimitBps) . ", target=" . ($fromBps $p1TargetBps) . ", maxChange=" . ($fromBps $maxChangeBps))
+                $logDetail ("Debug: Smoothing - P2 current=" . ($fromBps $p2CurrentLimitBps) . ", target=" . ($fromBps $p2TargetBps))
+                
                 # Apply smoothing to P1
-                :if ( ($p1TargetBps - $p1CurrentLimitBps) > $maxChangeBps ) do={ :set p1NewLimitBps ($p1CurrentLimitBps + $maxChangeBps) }
-                :if ( ($p1CurrentLimitBps - $p1TargetBps) > $maxChangeBps ) do={ :set p1NewLimitBps ($p1CurrentLimitBps - $maxChangeBps) }
+                :if ( ($p1TargetBps - $p1CurrentLimitBps) > $maxChangeBps ) do={
+                    :set p1NewLimitBps ($p1CurrentLimitBps + $maxChangeBps)
+                    $logDetail ("Debug: P1 increase limited to " . ($fromBps $p1NewLimitBps))
+                }
+                :if ( ($p1CurrentLimitBps - $p1TargetBps) > $maxChangeBps ) do={
+                    :set p1NewLimitBps ($p1CurrentLimitBps - $maxChangeBps)
+                    $logDetail ("Debug: P1 decrease limited to " . ($fromBps $p1NewLimitBps))
+                }
                 
                 # Apply smoothing to P2
-                :if ( ($p2TargetBps - $p2CurrentLimitBps) > $maxChangeBps ) do={ :set p2NewLimitBps ($p2CurrentLimitBps + $maxChangeBps) }
-                :if ( ($p2CurrentLimitBps - $p2TargetBps) > $maxChangeBps ) do={ :set p2NewLimitBps ($p2CurrentLimitBps - $maxChangeBps) }
+                :if ( ($p2TargetBps - $p2CurrentLimitBps) > $maxChangeBps ) do={
+                    :set p2NewLimitBps ($p2CurrentLimitBps + $maxChangeBps)
+                    $logDetail ("Debug: P2 increase limited to " . ($fromBps $p2NewLimitBps))
+                }
+                :if ( ($p2CurrentLimitBps - $p2TargetBps) > $maxChangeBps ) do={
+                    :set p2NewLimitBps ($p2CurrentLimitBps - $maxChangeBps)
+                    $logDetail ("Debug: P2 decrease limited to " . ($fromBps $p2NewLimitBps))
+                }
                 
                 # CRITICAL: Ensure smoothed values don't exceed total bandwidth constraint
                 :if ($currentPeriod = "midnight" || $currentPeriod = "work") do={
-                    :local totalAfterSmoothing ($p1NewLimitBps + $p2NewLimitBps)
-                    
-                    # Recalculate total limit based on current period
-                    :local currentTotalRatio $workTotalRatio
-                    :if ($currentPeriod = "midnight") do={
-                        :set currentTotalRatio $midnightTotalRatio
-                    }
-                    :local totalLimit (($parentMaxLimitBps * $currentTotalRatio) / 100)
-                    
-                    $logDetail ("Smoothing check for " . $parentName . ": Total after smoothing=" . ($fromBps $totalAfterSmoothing) . ", Limit=" . ($fromBps $totalLimit))
-                    
-                    :if ($totalAfterSmoothing > $totalLimit) do={
-                        # Scale down proportionally to fit within total limit
-                        :set p1NewLimitBps (($p1NewLimitBps * $totalLimit) / $totalAfterSmoothing)
-                        :set p2NewLimitBps (($p2NewLimitBps * $totalLimit) / $totalAfterSmoothing)
-                        $logBasic ("Smoothing exceeded total limit, scaled down: P1=" . ($fromBps $p1NewLimitBps) . ", P2=" . ($fromBps $p2NewLimitBps))
-                    }
-                }
+                     :local totalAfterSmoothing ($p1NewLimitBps + $p2NewLimitBps)
+                     
+                     # Recalculate total limit based on current period
+                     :local currentTotalRatio $workTotalRatio
+                     :if ($currentPeriod = "midnight") do={
+                         :set currentTotalRatio $midnightTotalRatio
+                     }
+                     :local totalLimit (($parentMaxLimitBps * $currentTotalRatio) / 100)
+                     
+                     $logDetail ("Smoothing check for " . $parentName . ": Total after smoothing=" . ($fromBps $totalAfterSmoothing) . ", Limit=" . ($fromBps $totalLimit))
+                     $logDetail ("Debug: Before scaling - P1=" . ($fromBps $p1NewLimitBps) . ", P2=" . ($fromBps $p2NewLimitBps))
+                     
+                     :if ($totalAfterSmoothing > $totalLimit) do={
+                         # Scale down proportionally to fit within total limit
+                         :local oldP1 $p1NewLimitBps
+                         :local oldP2 $p2NewLimitBps
+                         :set p1NewLimitBps (($p1NewLimitBps * $totalLimit) / $totalAfterSmoothing)
+                         :set p2NewLimitBps (($p2NewLimitBps * $totalLimit) / $totalAfterSmoothing)
+                         $logBasic ("Smoothing exceeded total limit, scaled down: P1=" . ($fromBps $oldP1) . "->" . ($fromBps $p1NewLimitBps) . ", P2=" . ($fromBps $oldP2) . "->" . ($fromBps $p2NewLimitBps))
+                     }
+                     
+                     $logDetail ("Debug: Final values after smoothing - P1=" . ($fromBps $p1NewLimitBps) . ", P2=" . ($fromBps $p2NewLimitBps) . ", Total=" . ($fromBps ($p1NewLimitBps + $p2NewLimitBps)))
+                 }
 
                 # --- Apply new settings ---
                 :local p1NewLimitStr ($fromBps $p1NewLimitBps)
@@ -382,6 +402,17 @@ $logDetail ("Random test: " . $testRandom1 . ", " . $testRandom2)
                 
                 :local p1BurstLimitBps (($p1NewLimitBps * $burstMultiplier) / 100)
                 :local p2BurstLimitBps (($p2NewLimitBps * $burstMultiplier) / 100)
+                
+                # Ensure burst-limit doesn't exceed parent queue max-limit
+                :if ($p1BurstLimitBps > $parentMaxLimitBps) do={
+                    :set p1BurstLimitBps $parentMaxLimitBps
+                    $logDetail ("Debug: P1 burst-limit capped to parent max-limit: " . ($fromBps $p1BurstLimitBps))
+                }
+                :if ($p2BurstLimitBps > $parentMaxLimitBps) do={
+                    :set p2BurstLimitBps $parentMaxLimitBps
+                    $logDetail ("Debug: P2 burst-limit capped to parent max-limit: " . ($fromBps $p2BurstLimitBps))
+                }
+                
                 :local p1BurstLimitStr ($fromBps $p1BurstLimitBps)
                 :local p2BurstLimitStr ($fromBps $p2BurstLimitBps)
                 
@@ -394,8 +425,21 @@ $logDetail ("Random test: " . $testRandom1 . ", " . $testRandom2)
                 # Debug: Check P1 queue properties before modification
                 :local p1QueueName [/queue tree get $p1qId name]
                 :local p1CurrentMaxLimit [/queue tree get $p1qId max-limit]
+                :local p1CurrentLimitAt [/queue tree get $p1qId limit-at]
                 :local p1Disabled [/queue tree get $p1qId disabled]
-                $logDetail ("Debug: P1 Queue '" . $p1QueueName . "' - Current max-limit: " . $p1CurrentMaxLimit . ", Disabled: " . $p1Disabled)
+                :local p1Parent [/queue tree get $p1qId parent]
+                :local parentCurrentMaxLimit [/queue tree get $parentId max-limit]
+                $logDetail ("Debug: P1 Queue '" . $p1QueueName . "' - Current max-limit: " . $p1CurrentMaxLimit . ", limit-at: " . $p1CurrentLimitAt . ", Disabled: " . $p1Disabled)
+                $logDetail ("Debug: Parent Queue '" . $p1Parent . "' - Current max-limit: " . $parentCurrentMaxLimit)
+                
+                # Check if there are other child queues that might cause constraints
+                :local allChildQueues [/queue tree find parent=$parentName]
+                :local totalChildMaxLimit 0
+                :foreach childId in=$allChildQueues do={
+                    :local childMaxLimit ($toBps [/queue tree get $childId max-limit])
+                    :set totalChildMaxLimit ($totalChildMaxLimit + $childMaxLimit)
+                }
+                $logDetail ("Debug: Total current child queues max-limit: " . ($fromBps $totalChildMaxLimit) . " vs Parent: " . ($fromBps $parentMaxLimitBps))
                 
                 # Calculate appropriate limit-at value based on period
                 :local p1LimitAtBps 0
@@ -410,25 +454,40 @@ $logDetail ("Random test: " . $testRandom1 . ", " . $testRandom2)
                 
                 $logDetail ("Debug: About to apply P1 settings - limit-at=" . $p1LimitAtStr . ", max-limit=" . $p1NewLimitStr . ", burst-limit=" . $p1BurstLimitStr . ", burst-threshold=" . $p1BurstThresholdStr . ", burst-time=" . $burstTime)
                 :do {
-                    # Set limit-at first (may need to be 0 for suppression periods to allow max-limit reduction)
-                    /queue tree set $p1qId limit-at=$p1LimitAtStr
-                    /queue tree set $p1qId max-limit=$p1NewLimitStr
-                    $logDetail ("P1 limit-at and max-limit set successfully, now setting burst parameters")
-                    /queue tree set $p1qId burst-limit=$p1BurstLimitStr burst-threshold=$p1BurstThresholdStr burst-time=$burstTime
-                    $logDetail ("P1 queue updated successfully")
-                } on-error={
-                    $logBasic ("Error applying P1 settings to " . $parentName . " - P1 ID: " . $p1qId . ". Trying simpler approach...")
-                    :do {
-                        # Try setting limit-at to 0 first to remove constraints, then max-limit
-                        /queue tree set $p1qId limit-at=0
-                        /queue tree set $p1qId max-limit=$p1NewLimitStr
-                        # Then set the correct limit-at value
-                        /queue tree set $p1qId limit-at=$p1LimitAtStr
-                        $logDetail ("P1 settings applied successfully (burst parameters skipped)")
-                    } on-error={
-                        $logBasic ("Failed to set P1 queue " . $p1qId . " ('" . $p1QueueName . "') - constraint issue")
-                    }
-                }
+                     # Step 1: Clear burst parameters first to remove constraints
+                     $logDetail ("Debug: Clearing burst parameters first")
+                     /queue tree set $p1qId burst-limit=0 burst-threshold=0 burst-time=0s
+                     
+                     # Step 2: Set limit-at to 0 to allow max-limit changes
+                     $logDetail ("Debug: Setting limit-at to 0")
+                     /queue tree set $p1qId limit-at=0
+                     
+                     # Step 3: Set the new max-limit
+                     $logDetail ("Debug: Setting max-limit to " . $p1NewLimitStr)
+                     /queue tree set $p1qId max-limit=$p1NewLimitStr
+                     
+                     # Step 4: Set the correct limit-at value
+                     $logDetail ("Debug: Setting limit-at to " . $p1LimitAtStr)
+                     /queue tree set $p1qId limit-at=$p1LimitAtStr
+                     
+                     # Step 5: Configure burst parameters separately
+                     $logDetail ("Debug: Configuring burst parameters")
+                     /queue tree set $p1qId burst-limit=$p1BurstLimitStr burst-threshold=$p1BurstThresholdStr burst-time=$burstTime
+                     
+                     $logDetail ("P1 queue updated successfully")
+                 } on-error={
+                     $logBasic ("Error applying P1 settings to " . $parentName . " - P1 ID: " . $p1qId . ". Trying without burst parameters...")
+                     :do {
+                         # Fallback: Only set essential parameters without burst
+                         /queue tree set $p1qId burst-limit=0 burst-threshold=0 burst-time=0s
+                         /queue tree set $p1qId limit-at=0
+                         /queue tree set $p1qId max-limit=$p1NewLimitStr
+                         /queue tree set $p1qId limit-at=$p1LimitAtStr
+                         $logBasic ("P1 settings applied successfully (without burst parameters)")
+                     } on-error={
+                         $logBasic ("Failed to set P1 queue " . $p1qId . " ('" . $p1QueueName . "') - all attempts failed")
+                     }
+                 }
                 
                 $logDetail ("Debug: About to apply P2 settings - max-limit=" . $p2NewLimitStr . ", burst-limit=" . $p2BurstLimitStr . ", burst-threshold=" . $p2BurstThresholdStr . ", burst-time=" . $burstTime)
                 :do {
