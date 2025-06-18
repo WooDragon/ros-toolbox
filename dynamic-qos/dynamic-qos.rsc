@@ -11,7 +11,7 @@
 # --- General Settings ---
 # Log script actions for debugging.
 # true = detailed logs, false = basic logs only (essential information)
-:local enableLogging true
+:local enableLogging false
 # Name for log entries
 :local scriptName "DynamicQoS"
 
